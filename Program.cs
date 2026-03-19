@@ -328,7 +328,7 @@ async Task<int> RunRegister(string[] args)
     // Resolve nupkg path, publisher prefix, and solution name from config
     var assemblyConfig = config?.Assemblies.FirstOrDefault();
     nupkgPath = assemblyConfig?.NupkgPath;
-    publisherPrefix = assemblyConfig?.PublisherPrefix ?? "ava";
+    publisherPrefix = assemblyConfig?.PublisherPrefix ?? "";
     solutionName = assemblyConfig?.SolutionName;
 
     // Resolve connection

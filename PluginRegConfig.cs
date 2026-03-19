@@ -88,7 +88,7 @@ public class AssemblyConfig
     public string? NupkgPath { get; set; }
 
     [JsonPropertyName("publisherPrefix")]
-    public string PublisherPrefix { get; set; } = "ava";
+    public string PublisherPrefix { get; set; } = "";
 
     [JsonPropertyName("solutionName")]
     public string? SolutionName { get; set; }
