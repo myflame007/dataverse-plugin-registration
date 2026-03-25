@@ -1,4 +1,5 @@
 using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Query;
 
 namespace Dataverse.PluginRegistration;
@@ -21,7 +22,7 @@ public class StepRegistrar
 
     /// <summary>
     /// Registers all steps for the given plugin assembly.
-    /// Finds the PluginAssembly or PluginPackage by name, then upserts steps + images.
+    /// Uses bulk-fetch + ExecuteMultipleRequest for optimal performance.
     /// </summary>
     public void RegisterSteps(string assemblyName, List<PluginStepInfo> steps)
     {
@@ -40,6 +41,21 @@ public class StepRegistrar
         // 2. Cache SdkMessage + SdkMessageFilter lookups
         var messageCache = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         var filterCache = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+
+        // 3. Bulk-fetch ALL existing steps for this assembly's plugin types (single query)
+        var allExistingSteps = FetchAllStepsForPluginTypes(pluginTypes.Values);
+
+        // 4. Build step write batch
+        var stepBatch = new ExecuteMultipleRequest
+        {
+            Requests = new OrganizationRequestCollection(),
+            Settings = new ExecuteMultipleSettings { ContinueOnError = true, ReturnResponses = true }
+        };
+
+        // Track resolved steps: step info + step ID (Empty for pending creates)
+        var resolvedSteps = new List<(PluginStepInfo Step, Guid StepId)>();
+        // Map: batch request index → (resolvedSteps index, log message, isCreate)
+        var batchStepMap = new Dictionary<int, (int ResultIndex, string Message, bool IsCreate)>();
 
         foreach (var step in steps)
         {
@@ -64,29 +80,98 @@ public class StepRegistrar
             {
                 filterId = ResolveFilter(messageId, step.EntityLogicalName, filterCache);
                 if (filterId == null)
-                {
                     _log($"  WARN: No SdkMessageFilter for '{step.Message}' on '{step.EntityLogicalName}'. Registering without filter.");
+            }
+
+            // Look up existing step from bulk-fetched data
+            var stepKey = $"{pluginTypeId}|{step.Name}";
+            allExistingSteps.TryGetValue(stepKey, out var existing);
+
+            var entity = BuildStepEntity(pluginTypeId, messageId, filterId, step);
+
+            if (existing != null)
+            {
+                if (!StepHasChanges(existing, step, messageId, filterId))
+                {
+                    _log($"  UNCHANGED step: {step.Name}");
+                    resolvedSteps.Add((step, existing.Id));
+                    continue;
+                }
+
+                entity.Id = existing.Id;
+                batchStepMap[stepBatch.Requests.Count] = (resolvedSteps.Count, $"  UPDATED step: {step.Name}", false);
+                stepBatch.Requests.Add(new UpdateRequest { Target = entity });
+                resolvedSteps.Add((step, existing.Id));
+            }
+            else
+            {
+                batchStepMap[stepBatch.Requests.Count] = (resolvedSteps.Count, $"  CREATED step: {step.Name}", true);
+                stepBatch.Requests.Add(new CreateRequest { Target = entity });
+                resolvedSteps.Add((step, Guid.Empty)); // placeholder, filled from response
+            }
+        }
+
+        // 5. Execute step batch (single HTTP call for all step writes)
+        if (stepBatch.Requests.Count > 0)
+        {
+            var stepResponse = (ExecuteMultipleResponse)_svc.Execute(stepBatch);
+
+            foreach (var resp in stepResponse.Responses)
+            {
+                if (!batchStepMap.TryGetValue(resp.RequestIndex, out var info))
+                    continue;
+
+                if (resp.Fault != null)
+                {
+                    _log($"  ERROR step '{resolvedSteps[info.ResultIndex].Step.Name}': {resp.Fault.Message}");
+                    continue;
+                }
+
+                _log(info.Message);
+
+                // For creates, capture the new step ID from the response
+                if (info.IsCreate && resp.Response is CreateResponse createResp)
+                {
+                    var (step, _) = resolvedSteps[info.ResultIndex];
+                    resolvedSteps[info.ResultIndex] = (step, createResp.id);
                 }
             }
+        }
 
-            // 3. Upsert the step
-            var stepId = UpsertStep(pluginTypeId, messageId, filterId, step);
+        // 6. Collect all valid step IDs for image processing (exclude failed creates)
+        var validSteps = resolvedSteps.Where(r => r.StepId != Guid.Empty).ToList();
+        if (validSteps.Count == 0) return;
 
-            // 4. Upsert images (skip invalid message/image combinations)
-            if (step.Image1Type >= 0 && !string.IsNullOrEmpty(step.Image1Name))
+        // 7. Bulk-fetch ALL existing images for these steps (single query)
+        var allExistingImages = FetchAllImagesForSteps(validSteps.Select(s => s.StepId));
+
+        // 8. Build image write batch
+        var imageBatch = new ExecuteMultipleRequest
+        {
+            Requests = new OrganizationRequestCollection(),
+            Settings = new ExecuteMultipleSettings { ContinueOnError = true, ReturnResponses = true }
+        };
+        var imageLogMessages = new Dictionary<int, string>();
+
+        foreach (var (step, stepId) in validSteps)
+        {
+            CollectImageOperation(step, stepId, step.Image1Name, step.Image1Type, step.Image1Attributes,
+                allExistingImages, imageBatch, imageLogMessages);
+            CollectImageOperation(step, stepId, step.Image2Name, step.Image2Type, step.Image2Attributes,
+                allExistingImages, imageBatch, imageLogMessages);
+        }
+
+        // 9. Execute image batch (single HTTP call for all image writes)
+        if (imageBatch.Requests.Count > 0)
+        {
+            var imgResponse = (ExecuteMultipleResponse)_svc.Execute(imageBatch);
+
+            foreach (var resp in imgResponse.Responses)
             {
-                if (IsValidImageType(step.Message, step.Image1Type))
-                    UpsertImage(stepId, step.Image1Name, step.Image1Type, step.Image1Attributes, step.Message);
-                else
-                    _log($"    SKIP image '{step.Image1Name}': {step.Message} does not support image type {step.Image1Type} (0=Pre, 1=Post, 2=Both)");
-            }
-
-            if (step.Image2Type >= 0 && !string.IsNullOrEmpty(step.Image2Name))
-            {
-                if (IsValidImageType(step.Message, step.Image2Type))
-                    UpsertImage(stepId, step.Image2Name, step.Image2Type, step.Image2Attributes, step.Message);
-                else
-                    _log($"    SKIP image '{step.Image2Name}': {step.Message} does not support image type {step.Image2Type} (0=Pre, 1=Post, 2=Both)");
+                if (resp.Fault != null)
+                    _log($"    ERROR image: {resp.Fault.Message}");
+                else if (imageLogMessages.TryGetValue(resp.RequestIndex, out var msg))
+                    _log(msg);
             }
         }
     }
@@ -204,11 +289,60 @@ public class StepRegistrar
         return null;
     }
 
-    /// <summary>Creates or updates an SdkMessageProcessingStep.</summary>
-    private Guid UpsertStep(Guid pluginTypeId, Guid messageId, Guid? filterId, PluginStepInfo step)
+    /// <summary>Fetches all existing steps for the given plugin types in a single query.</summary>
+    private Dictionary<string, Entity> FetchAllStepsForPluginTypes(IEnumerable<Guid> pluginTypeIds)
     {
-        var existing = FindExistingStep(pluginTypeId, step.Name);
+        var result = new Dictionary<string, Entity>(StringComparer.OrdinalIgnoreCase);
+        var ids = pluginTypeIds.ToList();
+        if (ids.Count == 0) return result;
 
+        var query = new QueryExpression("sdkmessageprocessingstep")
+        {
+            ColumnSet = new ColumnSet(
+                "sdkmessageprocessingstepid", "name", "plugintypeid",
+                "stage", "mode", "rank", "filteringattributes",
+                "description", "configuration", "asyncautodelete",
+                "sdkmessageid", "sdkmessagefilterid")
+        };
+        query.Criteria.AddCondition("plugintypeid", ConditionOperator.In, ids.Cast<object>().ToArray());
+
+        foreach (var e in _svc.RetrieveMultiple(query).Entities)
+        {
+            var pluginTypeId = e.GetAttributeValue<EntityReference>("plugintypeid")?.Id ?? Guid.Empty;
+            var name = e.GetAttributeValue<string>("name") ?? "";
+            result[$"{pluginTypeId}|{name}"] = e;
+        }
+
+        return result;
+    }
+
+    /// <summary>Fetches all existing images for the given step IDs in a single query.</summary>
+    private Dictionary<string, Entity> FetchAllImagesForSteps(IEnumerable<Guid> stepIds)
+    {
+        var result = new Dictionary<string, Entity>(StringComparer.OrdinalIgnoreCase);
+        var ids = stepIds.ToList();
+        if (ids.Count == 0) return result;
+
+        var query = new QueryExpression("sdkmessageprocessingstepimage")
+        {
+            ColumnSet = new ColumnSet(
+                "sdkmessageprocessingstepimageid", "sdkmessageprocessingstepid",
+                "name", "imagetype", "attributes")
+        };
+        query.Criteria.AddCondition("sdkmessageprocessingstepid", ConditionOperator.In, ids.Cast<object>().ToArray());
+
+        foreach (var e in _svc.RetrieveMultiple(query).Entities)
+        {
+            var stepId = e.GetAttributeValue<EntityReference>("sdkmessageprocessingstepid")?.Id ?? Guid.Empty;
+            var name = e.GetAttributeValue<string>("name") ?? "";
+            result[$"{stepId}|{name}"] = e;
+        }
+
+        return result;
+    }
+
+    private static Entity BuildStepEntity(Guid pluginTypeId, Guid messageId, Guid? filterId, PluginStepInfo step)
+    {
         var entity = new Entity("sdkmessageprocessingstep")
         {
             ["name"] = step.Name,
@@ -235,24 +369,58 @@ public class StepRegistrar
         if (!string.IsNullOrEmpty(step.UnSecureConfiguration))
             entity["configuration"] = step.UnSecureConfiguration;
 
+        return entity;
+    }
+
+    /// <summary>
+    /// Checks an image and adds it to the batch if it needs to be created or updated.
+    /// Unchanged and invalid images are logged immediately and skipped.
+    /// </summary>
+    private void CollectImageOperation(PluginStepInfo step, Guid stepId,
+        string? imageName, int imageType, string? imageAttributes,
+        Dictionary<string, Entity> allExistingImages,
+        ExecuteMultipleRequest batch, Dictionary<int, string> logMessages)
+    {
+        if (imageType < 0 || string.IsNullOrEmpty(imageName)) return;
+
+        if (!IsValidImageType(step.Message, imageType))
+        {
+            _log($"    SKIP image '{imageName}': {step.Message} does not support image type {imageType} (0=Pre, 1=Post, 2=Both)");
+            return;
+        }
+
+        allExistingImages.TryGetValue($"{stepId}|{imageName}", out var existing);
+
+        var entity = new Entity("sdkmessageprocessingstepimage")
+        {
+            ["sdkmessageprocessingstepid"] = new EntityReference("sdkmessageprocessingstep", stepId),
+            ["name"] = imageName,
+            ["entityalias"] = imageName,
+            ["imagetype"] = new OptionSetValue(imageType),
+            ["messagepropertyname"] = GetMessagePropertyName(step.Message)
+        };
+
+        if (!string.IsNullOrEmpty(imageAttributes))
+            entity["attributes"] = imageAttributes;
+
         if (existing != null)
         {
-            if (!StepHasChanges(existing, step, messageId, filterId))
+            if (!ImageHasChanges(existing, imageType, imageAttributes))
             {
-                _log($"  UNCHANGED step: {step.Name}");
-                return existing.Id;
+                _log($"    UNCHANGED image: {imageName} (type={imageType})");
+                return;
             }
 
             entity.Id = existing.Id;
-            _svc.Update(entity);
-            _log($"  UPDATED step: {step.Name}");
-            return existing.Id;
+            var idx = batch.Requests.Count;
+            batch.Requests.Add(new UpdateRequest { Target = entity });
+            logMessages[idx] = $"    UPDATED image: {imageName} (type={imageType})";
         }
         else
         {
-            var id = _svc.Create(entity);
-            _log($"  CREATED step: {step.Name}");
-            return id;
+            var idx = batch.Requests.Count;
+            batch.Requests.Add(new CreateRequest { Target = entity });
+            logMessages[idx] = $"    CREATED image: {imageName} (type={imageType})";
         }
     }
 
@@ -276,88 +444,12 @@ public class StepRegistrar
         return false;
     }
 
-    private Entity? FindExistingStep(Guid pluginTypeId, string stepName)
-    {
-        var query = new QueryExpression("sdkmessageprocessingstep")
-        {
-            ColumnSet = new ColumnSet(
-                "sdkmessageprocessingstepid", "stage", "mode", "rank",
-                "filteringattributes", "description", "configuration",
-                "asyncautodelete", "sdkmessageid", "sdkmessagefilterid"),
-            Criteria =
-            {
-                Conditions =
-                {
-                    new ConditionExpression("plugintypeid", ConditionOperator.Equal, pluginTypeId),
-                    new ConditionExpression("name", ConditionOperator.Equal, stepName)
-                }
-            }
-        };
-
-        return _svc.RetrieveMultiple(query).Entities.FirstOrDefault();
-    }
-
-    /// <summary>Creates or updates an SdkMessageProcessingStepImage.</summary>
-    private void UpsertImage(Guid stepId, string imageName, int imageType, string? attributes, string message)
-    {
-        var existing = FindExistingImage(stepId, imageName);
-
-        var entity = new Entity("sdkmessageprocessingstepimage")
-        {
-            ["sdkmessageprocessingstepid"] = new EntityReference("sdkmessageprocessingstep", stepId),
-            ["name"] = imageName,
-            ["entityalias"] = imageName,
-            ["imagetype"] = new OptionSetValue(imageType),
-            ["messagepropertyname"] = GetMessagePropertyName(message)
-        };
-
-        if (!string.IsNullOrEmpty(attributes))
-            entity["attributes"] = attributes;
-
-        if (existing != null)
-        {
-            if (!ImageHasChanges(existing, imageType, attributes))
-            {
-                _log($"    UNCHANGED image: {imageName} (type={imageType})");
-                return;
-            }
-
-            entity.Id = existing.Id;
-            _svc.Update(entity);
-            _log($"    UPDATED image: {imageName} (type={imageType})");
-        }
-        else
-        {
-            _svc.Create(entity);
-            _log($"    CREATED image: {imageName} (type={imageType})");
-        }
-    }
-
     /// <summary>Compares existing image attributes with desired values to detect changes.</summary>
     private static bool ImageHasChanges(Entity existing, int imageType, string? attributes)
     {
         if (existing.GetAttributeValue<OptionSetValue>("imagetype")?.Value != imageType) return true;
         if ((existing.GetAttributeValue<string>("attributes") ?? "") != (attributes ?? "")) return true;
         return false;
-    }
-
-    private Entity? FindExistingImage(Guid stepId, string imageName)
-    {
-        var query = new QueryExpression("sdkmessageprocessingstepimage")
-        {
-            ColumnSet = new ColumnSet(
-                "sdkmessageprocessingstepimageid", "imagetype", "attributes"),
-            Criteria =
-            {
-                Conditions =
-                {
-                    new ConditionExpression("sdkmessageprocessingstepid", ConditionOperator.Equal, stepId),
-                    new ConditionExpression("name", ConditionOperator.Equal, imageName)
-                }
-            }
-        };
-
-        return _svc.RetrieveMultiple(query).Entities.FirstOrDefault();
     }
 
     /// <summary>Maps message names to their MessagePropertyName for images.</summary>
