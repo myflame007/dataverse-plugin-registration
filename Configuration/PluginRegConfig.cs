@@ -120,6 +120,14 @@ public class EnvironmentConfig
     [JsonPropertyName("connectionString")]
     public string? ConnectionString { get; set; }
 
+    /// <summary>
+    /// Optional path to the MSAL token cache file.
+    /// Default: %LOCALAPPDATA%/Dataverse.PluginRegistration/msal_token_cache.bin
+    /// Supports ${VAR} placeholders.
+    /// </summary>
+    [JsonPropertyName("tokenCachePath")]
+    public string? TokenCachePath { get; set; }
+
     /// <summary>Builds a Dataverse connection string from the config properties.</summary>
     public string BuildConnectionString()
     {

@@ -1,14 +1,25 @@
 using Microsoft.Identity.Client;
+using Microsoft.Identity.Client.Extensions.Msal;
 using Microsoft.PowerPlatform.Dataverse.Client;
 
 namespace Dataverse.PluginRegistration;
 
 /// <summary>
-/// Handles MSAL-based interactive authentication with a custom browser success page.
-/// Uses PublicClientApplication directly so we can control the post-login HTML.
+/// Handles MSAL-based authentication with persistent token caching.
+/// Tokens are cached to disk so users don't need to re-authenticate on every run.
+/// Silent token refresh is attempted first; interactive login only when needed.
 /// </summary>
 public static class DataverseAuth
 {
+    /// <summary>
+    /// Default directory for the MSAL token cache file.
+    /// Can be overridden via EnvironmentConfig.TokenCachePath.
+    /// </summary>
+    private static readonly string DefaultCacheDir =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Dataverse.PluginRegistration");
+
+    private const string CacheFileName = "msal_token_cache.bin";
     private const string SuccessHtml = """
         <!DOCTYPE html>
         <html>
@@ -98,8 +109,10 @@ public static class DataverseAuth
         """;
 
     /// <summary>
-    /// Connects to Dataverse using interactive MSAL auth with a custom browser page.
-    /// Falls back to connection string auth if a full connection string is provided.
+    /// Connects to Dataverse using MSAL auth with persistent token cache.
+    /// 1. Tries AcquireTokenSilent (cached/refresh token) — no browser needed
+    /// 2. Falls back to interactive login (browser) only when silent fails
+    /// Token cache is persisted to disk so logins survive across runs.
     /// </summary>
     public static async Task<ServiceClient> ConnectAsync(
         EnvironmentConfig envConfig, CancellationToken ct = default)
@@ -117,25 +130,70 @@ public static class DataverseAuth
             .WithRedirectUri("http://localhost")
             .Build();
 
+        // Register persistent file-based token cache
+        await RegisterTokenCacheAsync(app, envConfig.TokenCachePath);
+
         var scopes = new[] { $"{url}/.default" };
 
-        // Always interactive login with custom HTML
-        var authResult = await app.AcquireTokenInteractive(scopes)
-            .WithSystemWebViewOptions(new SystemWebViewOptions
-            {
-                HtmlMessageSuccess = SuccessHtml,
-                HtmlMessageError = ErrorHtml
-            })
-            .WithPrompt(envConfig.LoginPrompt?.Equals("Always", StringComparison.OrdinalIgnoreCase) == true
-                ? Prompt.ForceLogin
-                : Prompt.SelectAccount)
-            .ExecuteAsync(ct)
-            .ConfigureAwait(false);
+        // Try silent authentication first (uses cached access token or refresh token)
+        AuthenticationResult? authResult = null;
+        var accounts = await app.GetAccountsAsync().ConfigureAwait(false);
+        var account = accounts.FirstOrDefault();
 
-        // Connect ServiceClient with the acquired token
+        if (account != null)
+        {
+            try
+            {
+                authResult = await app.AcquireTokenSilent(scopes, account)
+                    .ExecuteAsync(ct)
+                    .ConfigureAwait(false);
+                Console.WriteLine("  Token from cache (no browser login needed).");
+            }
+            catch (MsalUiRequiredException)
+            {
+                // Silent failed — refresh token expired or consent needed → interactive
+            }
+        }
+
+        // Fall back to interactive login
+        if (authResult == null)
+        {
+            var forceLogin = envConfig.LoginPrompt?.Equals("Always", StringComparison.OrdinalIgnoreCase) == true;
+            authResult = await app.AcquireTokenInteractive(scopes)
+                .WithSystemWebViewOptions(new SystemWebViewOptions
+                {
+                    HtmlMessageSuccess = SuccessHtml,
+                    HtmlMessageError = ErrorHtml
+                })
+                .WithPrompt(forceLogin ? Prompt.ForceLogin : Prompt.SelectAccount)
+                .ExecuteAsync(ct)
+                .ConfigureAwait(false);
+        }
+
+        // Connect ServiceClient with a token provider that auto-refreshes
         var client = new ServiceClient(
             instanceUrl: new Uri(url),
-            tokenProviderFunction: async _ => authResult.AccessToken,
+            tokenProviderFunction: async _ =>
+            {
+                // On every API call: try silent first (MSAL handles refresh internally)
+                var currentAccounts = await app.GetAccountsAsync().ConfigureAwait(false);
+                var currentAccount = currentAccounts.FirstOrDefault();
+                if (currentAccount != null)
+                {
+                    try
+                    {
+                        var refreshed = await app.AcquireTokenSilent(scopes, currentAccount)
+                            .ExecuteAsync(CancellationToken.None)
+                            .ConfigureAwait(false);
+                        return refreshed.AccessToken;
+                    }
+                    catch (MsalUiRequiredException)
+                    {
+                        // Extremely rare during a single session — fall through
+                    }
+                }
+                return authResult.AccessToken;
+            },
             useUniqueInstance: true);
 
         if (!client.IsReady)
@@ -143,5 +201,28 @@ public static class DataverseAuth
                 $"ServiceClient not ready: {client.LastError}");
 
         return client;
+    }
+
+    /// <summary>
+    /// Registers a cross-platform file-based token cache using MSAL.Extensions.
+    /// Tokens (access + refresh) are encrypted and stored on disk.
+    /// </summary>
+    private static async Task RegisterTokenCacheAsync(IPublicClientApplication app, string? customCachePath)
+    {
+        var cacheDir = !string.IsNullOrWhiteSpace(customCachePath)
+            ? Path.GetDirectoryName(Path.GetFullPath(customCachePath)) ?? DefaultCacheDir
+            : DefaultCacheDir;
+
+        var cacheFile = !string.IsNullOrWhiteSpace(customCachePath)
+            ? Path.GetFileName(customCachePath)
+            : CacheFileName;
+
+        Directory.CreateDirectory(cacheDir);
+
+        var storageProperties = new StorageCreationPropertiesBuilder(cacheFile, cacheDir)
+            .Build();
+
+        var cacheHelper = await MsalCacheHelper.CreateAsync(storageProperties).ConfigureAwait(false);
+        cacheHelper.RegisterCache(app.UserTokenCache);
     }
 }
