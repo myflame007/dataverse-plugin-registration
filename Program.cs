@@ -255,18 +255,12 @@ async Task<int> RunRegister(string[] args)
 
     Console.WriteLine($"Connected: {client.ConnectedOrgFriendlyName} ({client.ConnectedOrgUniqueName})\n");
 
-    // ── Step 1/2: Push NuGet package ──────────────────────────────
-    Console.WriteLine("Step 1/2: Push Plugin Package");
+    // ── Step 1/3: Push Assembly or NuGet package ───────────────
+    Console.WriteLine("Step 1/3: Push Plugin Assembly/Package");
     Console.WriteLine(new string('─', 40));
-    if (!string.IsNullOrEmpty(nupkgPath))
+    if (!string.IsNullOrEmpty(nupkgPath) && File.Exists(nupkgPath))
     {
-        if (!File.Exists(nupkgPath))
-        {
-            Console.Error.WriteLine($"ERROR: NuGet package not found: {nupkgPath}");
-            Console.Error.WriteLine("  Run 'dotnet pack' first to create the .nupkg file.");
-            return 1;
-        }
-
+        // NuGet-based PluginPackage deployment
         var deployer = new PackageDeployer(client, Console.WriteLine);
         try
         {
@@ -282,7 +276,25 @@ async Task<int> RunRegister(string[] args)
     }
     else
     {
-        Console.WriteLine("  No nupkgPath configured — skipping (assuming already deployed).");
+        // Classic PluginAssembly deployment (DLL directly)
+        // Collect all plugin type names from steps + custom APIs
+        var pluginTypeNames = steps.Select(s => s.PluginTypeName)
+            .Concat(customApis.Select(a => a.PluginTypeName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var asmDeployer = new AssemblyDeployer(client, Console.WriteLine);
+        try
+        {
+            asmDeployer.Push(assemblyPath!, assemblyName!, pluginTypeNames);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ERROR pushing assembly: {ex.Message}");
+            if (ex.InnerException != null)
+                Console.Error.WriteLine($"  Inner: {ex.InnerException.Message}");
+            return 1;
+        }
     }
 
     // ── Step 2/3: Register steps (with change detection) ─────────
