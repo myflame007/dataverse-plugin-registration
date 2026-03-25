@@ -125,16 +125,16 @@ partial class PluginRegJsonContext : JsonSerializerContext { }
 
 #### Upgrade-Schritte (in Phase 0 integriert)
 
-- [ ] `TargetFramework` in `.csproj` von `net8.0` auf `net10.0` ändern
-- [ ] `LangVersion` auf `14` setzen (oder `preview` für neueste Features)
-- [ ] .NET 10 SDK installieren (falls noch nicht vorhanden)
-- [ ] NuGet-Pakete auf .NET 10 kompatible Versionen updaten
-- [ ] `dotnet build` verifizieren — keine Breaking Changes erwartet
-- [ ] Schrittweise C# 14 Features einführen (nicht alles auf einmal, sondern bei jedem Refactoring-Schritt)
+- [x] `TargetFramework` in `.csproj` von `net8.0` auf `net10.0` ändern
+- [x] `LangVersion` auf `14` setzen (oder `preview` für neueste Features)
+- [x] .NET 10 SDK installieren (falls noch nicht vorhanden)
+- [x] NuGet-Pakete auf .NET 10 kompatible Versionen updaten
+- [x] `dotnet build` verifizieren — keine Breaking Changes erwartet
+- [x] Schrittweise C# 14 Features einführen (nicht alles auf einmal, sondern bei jedem Refactoring-Schritt)
 
 ---
 
-## Phase 0 — Architektur-Refactoring (Testbarkeit & Wartbarkeit)
+## Phase 0 — Architektur-Refactoring (Testbarkeit & Wartbarkeit) ✅ DONE
 
 Bevor wir Features hinzufügen oder Tests schreiben, muss die Codebasis so umgebaut werden,
 dass sie **testbar und erweiterbar** ist. Aktuell sind die Klassen teilweise eng gekoppelt
@@ -144,103 +144,103 @@ und schwer isoliert testbar.
 
 > Nach Abschluss der Architektur-Arbeit lassen wir spezialisierte Agents die Ergebnisse reviewen.
 
-- [ ] **Software Architect** Agent: DI-Setup, Interface-Design und Projektstruktur reviewen
+- [x] **Software Architect** Agent: DI-Setup, Interface-Design und Projektstruktur reviewen
   - Pruft: Sind die Abstractions sinnvoll? Stimmen die Lifetimes (Singleton/Transient/Scoped)?
   - Pruft: Ist die Ordnerstruktur skalierbar? Gibt es zirkulare Abhangigkeiten?
-- [ ] **Code Reviewer** Agent: Gesamtes Refactoring reviewen
+- [x] **Code Reviewer** Agent: Gesamtes Refactoring reviewen
   - Pruft: Korrektheit, keine Regressions, saubere Interfaces
   - Pruft: Werden C# 14 Features sinnvoll eingesetzt oder erzwungen?
-- [ ] **Security Engineer** Agent: Auth-Refactoring reviewen
+- [x] **Security Engineer** Agent: Auth-Refactoring reviewen
   - Pruft: IAuthProvider-Abstraktion leakt keine Credentials
   - Pruft: ServiceClient-Disposal korrekt, keine Token in Logs
-- [ ] `/simplify` Skill auf alle refactored Files anwenden
+- [x] `/simplify` Skill auf alle refactored Files anwenden
 
 ### 0.1 Sofort-Fixes (vor dem Refactoring)
 
 Dinge die jetzt schon falsch sind und vor dem Architektur-Umbau gefixt werden mussen,
 weil sie sonst ins neue Design ubernommen werden.
 
-- [ ] **`.env` in `.gitignore` aufnehmen** — aktuell fehlt der Eintrag, Credential-Leak-Risiko!
+- [x] **`.env` in `.gitignore` aufnehmen** — aktuell fehlt der Eintrag, Credential-Leak-Risiko!
 - [x] ~~**Hardcoded `"ava"` Publisher-Prefix entfernen**~~ (DONE)
   - `AssemblyConfig.PublisherPrefix` Default auf `""` geandert
   - `ResolveArgs` Fallback auf `""` geandert
   - Fur ein Open-Source-Tool darf kein firmenspezifischer Default existieren
-- [ ] **`Profile` Property in `AssemblyConfig` klaren**
+- [x] **`Profile` Property in `AssemblyConfig` klaren**
   - Aktuell existiert die Property mit Default `"debug"`, wird aber nirgends gelesen
   - Entweder implementieren (verschiedene DLL-Pfade fur debug/release) oder entfernen
   - Halbimplementierte Features verwirren User
-- [ ] **Config-Schema-Version einfuhren**
+- [x] **Config-Schema-Version einfuhren**
   - `"schemaVersion": 1` in `pluginreg.json` aufnehmen
   - Bei jedem Laden prufen: bekannte Version? Wenn nicht → klare Fehlermeldung
   - Ohne das konnen zukunftige Config-Anderungen silent falsche Ergebnisse liefern
 
 **Definition of Done:**
-- [ ] `.env` steht in `.gitignore`
-- [ ] Kein hardcoded `"ava"` mehr im gesamten Projekt
-- [ ] `Profile` ist entweder implementiert oder entfernt
-- [ ] `pluginreg.json` hat ein `schemaVersion` Feld das beim Laden validiert wird
+- [x] `.env` steht in `.gitignore`
+- [x] Kein hardcoded `"ava"` mehr im gesamten Projekt
+- [x] `Profile` ist entweder implementiert oder entfernt
+- [x] `pluginreg.json` hat ein `schemaVersion` Feld das beim Laden validiert wird
 
 ### 0.2 Interfaces extrahieren
 
 Aktuell werden `StepRegistrar`, `PackageDeployer` und `DataverseAuth` direkt instanziiert.
 Fur Testbarkeit brauchen wir Interfaces, damit wir in Tests Mocks einsetzen konnen.
 
-- [ ] `IStepRegistrar` Interface extrahieren
+- [x] `IStepRegistrar` Interface extrahieren
   - Methode: `void RegisterSteps(string assemblyName, List<PluginStepInfo> steps)`
   - Methode: `void DeleteOrphanedSteps(string assemblyName, List<PluginStepInfo> currentSteps)` (für Phase 2)
-- [ ] `IPackageDeployer` Interface extrahieren
+- [x] `IPackageDeployer` Interface extrahieren
   - Methode: `Guid Push(string nupkgPath, string packageName, string publisherPrefix, string? solutionName)`
-- [ ] `IAttributeReader` Interface extrahieren (aktuell statisch)
+- [x] `IAttributeReader` Interface extrahieren (aktuell statisch)
   - Methode: `List<PluginStepInfo> ReadFromAssembly(string assemblyPath)`
   - Statische Klasse zu instanziierbarer Klasse umbauen
-- [ ] `IAuthProvider` Interface extrahieren
+- [x] `IAuthProvider` Interface extrahieren
   - Methode: `Task<IOrganizationService> ConnectAsync(EnvironmentConfig config, CancellationToken ct)`
   - Rückgabetyp auf `IOrganizationService` statt `ServiceClient` ändern — ermöglicht Mocking
-- [ ] `IFileSystem` Interface einführen (für PackageDeployer)
+- [x] `IFileSystem` Interface einführen (für PackageDeployer)
   - Methoden: `byte[] ReadAllBytes(string path)`, `bool FileExists(string path)`, `Stream OpenZip(string path)`
   - Default-Implementierung `PhysicalFileSystem` delegiert an `System.IO`
   - In Tests: `FakeFileSystem` mit In-Memory-Daten
 
 **Definition of Done:**
-- [ ] Jede Klasse hat ein zugehöriges Interface im Ordner `/Interfaces/`
-- [ ] Alle Klassen implementieren ihr Interface
-- [ ] Kein `new StepRegistrar(...)` mehr in Program.cs — nur noch über Interface
-- [ ] Code kompiliert und `register`-Befehl funktioniert weiterhin identisch
+- [x] Jede Klasse hat ein zugehöriges Interface im Ordner `/Interfaces/`
+- [x] Alle Klassen implementieren ihr Interface
+- [x] Kein `new StepRegistrar(...)` mehr in Program.cs — nur noch über Interface
+- [x] Code kompiliert und `register`-Befehl funktioniert weiterhin identisch
 
 ### 0.3 Dependency Injection einführen
 
 Aktuell wird alles in `Program.cs` manuell verdrahtet. Für Testbarkeit und Erweiterbarkeit
 brauchen wir einen DI-Container.
 
-- [ ] `Microsoft.Extensions.DependencyInjection` NuGet hinzufügen
-- [ ] `ServiceCollection` in Program.cs aufsetzen
-- [ ] Registrierungen:
-  - [ ] `IAuthProvider` → `DataverseAuth` (Singleton)
-  - [ ] `IOrganizationService` → via Factory aus `IAuthProvider` (Scoped)
-  - [ ] `IPackageDeployer` → `PackageDeployer` (Transient)
-  - [ ] `IStepRegistrar` → `StepRegistrar` (Transient)
-  - [ ] `IAttributeReader` → `AttributeReader` (Singleton)
-  - [ ] `IFileSystem` → `PhysicalFileSystem` (Singleton)
-  - [ ] `ILogger` → Console-Logger (Singleton)
-- [ ] Command-Handler als eigene Klassen auslagern (aus Program.cs raus):
-  - [ ] `InitCommand.cs` — Erstellt pluginreg.json
-  - [ ] `RegisterCommand.cs` — Orchestriert Deploy + Register
-  - [ ] `ListCommand.cs` — Zeigt Steps ohne Dataverse-Verbindung
-- [ ] Program.cs wird schlank: nur noch Argument-Parsing → DI Setup → Command-Dispatch
+- [x] `Microsoft.Extensions.DependencyInjection` NuGet hinzufügen
+- [x] `ServiceCollection` in Program.cs aufsetzen
+- [x] Registrierungen:
+  - [x] `IAuthProvider` → `DataverseAuth` (Singleton)
+  - [x] `IOrganizationService` → via Factory aus `IAuthProvider` (Scoped)
+  - [x] `IPackageDeployer` → `PackageDeployer` (Transient)
+  - [x] `IStepRegistrar` → `StepRegistrar` (Transient)
+  - [x] `IAttributeReader` → `AttributeReader` (Singleton)
+  - [x] `IFileSystem` → `PhysicalFileSystem` (Singleton)
+  - [x] `ILogger` → Console-Logger (Singleton)
+- [x] Command-Handler als eigene Klassen auslagern (aus Program.cs raus):
+  - [x] `InitCommand.cs` — Erstellt pluginreg.json
+  - [x] `RegisterCommand.cs` — Orchestriert Deploy + Register
+  - [x] `ListCommand.cs` — Zeigt Steps ohne Dataverse-Verbindung
+- [x] Program.cs wird schlank: nur noch Argument-Parsing → DI Setup → Command-Dispatch
 
 **Definition of Done:**
-- [ ] Program.cs hat < 80 Zeilen
-- [ ] Jeder Command ist eine eigene Klasse mit `Execute()`-Methode
-- [ ] Alle Dependencies werden über Konstruktor-Injektion aufgelöst
-- [ ] Keine `static` Business-Logik mehr (außer reine Utility-Funktionen wie EnvFile)
-- [ ] Code kompiliert und alle 3 Befehle (`init`, `register`, `list`) funktionieren identisch
+- [x] Program.cs hat < 80 Zeilen
+- [x] Jeder Command ist eine eigene Klasse mit `Execute()`-Methode
+- [x] Alle Dependencies werden über Konstruktor-Injektion aufgelöst
+- [x] Keine `static` Business-Logik mehr (außer reine Utility-Funktionen wie EnvFile)
+- [x] Code kompiliert und alle 3 Befehle (`init`, `register`, `list`) funktionieren identisch
 
 ### 0.4 Projektstruktur reorganisieren
 
 Aktuell liegen alle .cs-Dateien flach im Root. Für Wartbarkeit und Orientierung brauchen
 wir eine klare Ordnerstruktur.
 
-- [ ] Ordnerstruktur anlegen:
+- [x] Ordnerstruktur anlegen:
   ```
   /src/
     /Commands/          ← InitCommand, RegisterCommand, ListCommand
@@ -253,40 +253,40 @@ wir eine klare Ordnerstruktur.
     /Unit/              ← AttributeReaderTests, StepRegistrarTests, etc.
     /Integration/       ← Dataverse-Integrationstests (brauchen echte Umgebung)
   ```
-- [ ] `.csproj` Pfade anpassen
-- [ ] Test-Projekt anlegen: `Dataverse.PluginRegistration.Tests.csproj`
+- [x] `.csproj` Pfade anpassen
+- [x] Test-Projekt anlegen: `Dataverse.PluginRegistration.Tests.csproj`
   - xUnit als Test-Framework
   - Moq oder NSubstitute für Mocking
   - FluentAssertions für lesbare Assertions
-- [ ] Solution-File (`.sln`) anlegen, das beide Projekte enthält
+- [x] Solution-File (`.sln`) anlegen, das beide Projekte enthält
 
 **Definition of Done:**
-- [ ] `dotnet build` erfolgreich für beide Projekte
-- [ ] `dotnet test` läuft (auch wenn noch keine Tests existieren)
-- [ ] Jede Datei liegt im richtigen Ordner laut Schema oben
-- [ ] Solution-File existiert und beide Projekte sind referenziert
+- [x] `dotnet build` erfolgreich für beide Projekte
+- [x] `dotnet test` läuft (auch wenn noch keine Tests existieren)
+- [x] Jede Datei liegt im richtigen Ordner laut Schema oben
+- [x] Solution-File existiert und beide Projekte sind referenziert
 
 ### 0.5 Logging vereinheitlichen
 
 Aktuell wird `Action<string> log` als Callback durch die Klassen gereicht.
 Das funktioniert, ist aber schwer erweiterbar (kein Log-Level, kein File-Output).
 
-- [ ] `Microsoft.Extensions.Logging` NuGet hinzufügen
-- [ ] `ILogger<T>` statt `Action<string>` in allen Klassen verwenden
-- [ ] Log-Levels einführen:
+- [x] `Microsoft.Extensions.Logging` NuGet hinzufügen
+- [x] `ILogger<T>` statt `Action<string>` in allen Klassen verwenden
+- [x] Log-Levels einführen:
   - `LogDebug` — Detaillierte Infos (Query-Details, Entity-Attribute)
   - `LogInformation` — Normaler Ablauf (Step registriert, Package deployed)
   - `LogWarning` — Verdächtiges Verhalten (Step unverändert, Package-Version gleich)
   - `LogError` — Fehler mit Recovery-Möglichkeit
   - `LogCritical` — Fatale Fehler (Auth fehlgeschlagen, Config ungültig)
-- [ ] `--verbose` Flag einführen → setzt MinimumLevel auf Debug
-- [ ] Optional: File-Logging in `plugin-reg.log` für Diagnose
+- [x] `--verbose` Flag einführen → setzt MinimumLevel auf Debug
+- [x] Optional: File-Logging in `plugin-reg.log` für Diagnose
 
 **Definition of Done:**
-- [ ] Alle `Console.WriteLine`-Aufrufe in Services durch `ILogger` ersetzt
-- [ ] `--verbose` zeigt Debug-Output, ohne `--verbose` nur Information+
-- [ ] Fehlermeldungen enthalten Kontext (welcher Step, welche Assembly, welche Umgebung)
-- [ ] Kein `Action<string> log` Callback mehr in Konstruktoren
+- [x] Alle `Console.WriteLine`-Aufrufe in Services durch `ILogger` ersetzt
+- [x] `--verbose` zeigt Debug-Output, ohne `--verbose` nur Information+
+- [x] Fehlermeldungen enthalten Kontext (welcher Step, welche Assembly, welche Umgebung)
+- [x] Kein `Action<string> log` Callback mehr in Konstruktoren
 
 ---
 
