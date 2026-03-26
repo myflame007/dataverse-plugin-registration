@@ -103,14 +103,15 @@ public class CustomApiRegistrar
         if (existing != null)
         {
             if (!CustomApiHasChanges(existing, api, pluginTypeId))
-            {
                 _log($"  UNCHANGED api: {api.UniqueName}");
-                return existing.Id;
+            else
+            {
+                entity.Id = existing.Id;
+                _svc.Update(entity);
+                _log($"  UPDATED api: {api.UniqueName}");
             }
 
-            entity.Id = existing.Id;
-            _svc.Update(entity);
-            _log($"  UPDATED api: {api.UniqueName}");
+            EnsureInSolution(existing.Id);
             return existing.Id;
         }
         else
@@ -122,6 +123,43 @@ public class CustomApiRegistrar
             _log($"  CREATED api: {api.UniqueName}");
             return response.id;
         }
+    }
+
+    /// <summary>
+    /// Adds a component to the configured solution. Safe to call repeatedly — idempotent.
+    /// Resolves the component type dynamically from solutioncomponent to avoid hardcoding.
+    /// </summary>
+    private void EnsureInSolution(Guid componentId)
+    {
+        if (string.IsNullOrEmpty(_solutionName)) return;
+
+        var typeQuery = new QueryExpression("solutioncomponent")
+        {
+            ColumnSet = new ColumnSet("componenttype"),
+            TopCount = 1
+        };
+        typeQuery.Criteria.AddCondition("objectid", ConditionOperator.Equal, componentId);
+        var typeResult = _svc.RetrieveMultiple(typeQuery);
+        var componentType = typeResult.Entities.FirstOrDefault()?.GetAttributeValue<OptionSetValue>("componenttype")?.Value;
+
+        if (componentType == null)
+        {
+            _log($"    WARN: Could not resolve component type — skipping solution assignment.");
+            return;
+        }
+
+        var request = new OrganizationRequest("AddSolutionComponent")
+        {
+            Parameters =
+            {
+                ["ComponentId"]           = componentId,
+                ["ComponentType"]         = componentType.Value,
+                ["SolutionUniqueName"]    = _solutionName,
+                ["AddRequiredComponents"] = false,
+            }
+        };
+        _svc.Execute(request);
+        _log($"    Added to solution: {_solutionName}");
     }
 
     internal static bool CustomApiHasChanges(Entity existing, CustomApiInfo api, Guid pluginTypeId)

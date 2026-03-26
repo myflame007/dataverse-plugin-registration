@@ -90,7 +90,7 @@ public class AssemblyConfig
     [JsonPropertyName("publisherPrefix")]
     public string PublisherPrefix { get; set; } = "";
 
-    [JsonPropertyName("solutionName")]
+    [JsonPropertyName("solution")]
     public string? SolutionName { get; set; }
 
     [JsonPropertyName("profile")]
