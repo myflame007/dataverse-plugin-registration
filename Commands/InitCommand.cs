@@ -7,21 +7,24 @@ internal static class InitCommand
         // ── Config file ────────────────────────────────────────────────────────
         var configPath = ArgsResolver.GetArg(args, "--config") ?? PluginRegConfig.DefaultFileName;
 
+        bool writeConfig = true;
         if (File.Exists(configPath))
         {
             Console.WriteLine($"Config file already exists: {configPath}");
             Console.Write("Overwrite? (y/N): ");
             var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
-            if (answer != "y") return 0;
+            writeConfig = answer == "y";
         }
 
-        var currentDir = Path.GetFileName(Directory.GetCurrentDirectory()) ?? "MyPlugin";
-        var config = PluginRegConfig.CreateDefault(currentDir, $@"bin\Debug\net462\{currentDir}.dll");
+        if (writeConfig)
+        {
+            var currentDir = Path.GetFileName(Directory.GetCurrentDirectory()) ?? "MyPlugin";
+            var config = PluginRegConfig.CreateDefault(currentDir, $@"bin\Debug\net462\{currentDir}.dll");
+            config.Save(configPath);
+            Console.WriteLine($"Created: {Path.GetFullPath(configPath)}");
+        }
 
-        config.Save(configPath);
-        Console.WriteLine($"Created: {Path.GetFullPath(configPath)}");
-
-        // ── Attribute templates ────────────────────────────────────────────────
+        // ── Attribute templates (always scaffolded / updated) ──────────────────
         ScaffoldAttributeTemplates();
 
         Console.WriteLine("Edit environments and assembly paths, then run: plugin-reg register --env dev");
