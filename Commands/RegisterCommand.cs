@@ -1,4 +1,6 @@
 using Microsoft.PowerPlatform.Dataverse.Client;
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
 
 namespace Dataverse.PluginRegistration;
 
@@ -93,6 +95,15 @@ internal static class RegisterCommand
         }
 
         Console.WriteLine($"Connected: {client.ConnectedOrgFriendlyName} ({client.ConnectedOrgUniqueName})\n");
+
+        // ── Solution check ─────────────────────────────────────────
+        if (!string.IsNullOrEmpty(solutionName))
+        {
+            bool autoCreate = args.Any(a => a.Equals("--create-solution", StringComparison.OrdinalIgnoreCase));
+            if (!EnsureSolution(client, solutionName, publisherPrefix, autoCreate))
+                return 1;
+            Console.WriteLine();
+        }
 
         // ── Step 1/3: Push Assembly or NuGet package ───────────────
         Console.WriteLine("Step 1/3: Push Plugin Assembly/Package");
@@ -192,5 +203,88 @@ internal static class RegisterCommand
         Console.WriteLine("     https://buymeacoffee.com/rstickler.dev");
         Console.WriteLine();
         return 0;
+    }
+
+    // ── Solution helpers ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ensures the target solution exists. If not, prompts the user (or auto-creates
+    /// when --create-solution is passed). Returns false if the caller should abort.
+    /// </summary>
+    private static bool EnsureSolution(IOrganizationService svc, string solutionName, string? publisherPrefix, bool autoCreate)
+    {
+        Console.WriteLine($"Checking solution: {solutionName}");
+
+        if (SolutionExists(svc, solutionName))
+        {
+            Console.WriteLine($"  Solution found.");
+            return true;
+        }
+
+        Console.WriteLine($"  Solution '{solutionName}' not found in this environment.");
+
+        if (!autoCreate)
+        {
+            if (Console.IsInputRedirected)
+            {
+                Console.Error.WriteLine($"ERROR: Solution '{solutionName}' does not exist.");
+                Console.Error.WriteLine($"  Run with --create-solution to create it automatically.");
+                return false;
+            }
+
+            Console.Write("  Create it now? (y/N): ");
+            var answer = Console.ReadLine()?.Trim().ToLowerInvariant();
+            if (answer != "y")
+            {
+                Console.Error.WriteLine("Aborted. Create the solution in Dataverse and re-run.");
+                return false;
+            }
+        }
+
+        return CreateSolution(svc, solutionName, publisherPrefix);
+    }
+
+    private static bool SolutionExists(IOrganizationService svc, string solutionName)
+    {
+        var query = new QueryExpression("solution") { TopCount = 1 };
+        query.Criteria.AddCondition("uniquename", ConditionOperator.Equal, solutionName);
+        return svc.RetrieveMultiple(query).Entities.Count > 0;
+    }
+
+    private static bool CreateSolution(IOrganizationService svc, string solutionName, string? publisherPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(publisherPrefix))
+        {
+            Console.Error.WriteLine("ERROR: Cannot create solution — 'publisherPrefix' is not set in pluginreg.json.");
+            return false;
+        }
+
+        var publisherQuery = new QueryExpression("publisher")
+        {
+            ColumnSet = new ColumnSet("publisherid", "friendlyname"),
+            TopCount = 1
+        };
+        publisherQuery.Criteria.AddCondition("customizationprefix", ConditionOperator.Equal, publisherPrefix);
+        var publishers = svc.RetrieveMultiple(publisherQuery);
+
+        if (publishers.Entities.Count == 0)
+        {
+            Console.Error.WriteLine($"ERROR: No publisher with prefix '{publisherPrefix}' found.");
+            Console.Error.WriteLine($"  Create the publisher in Dataverse first, or correct 'publisherPrefix' in pluginreg.json.");
+            return false;
+        }
+
+        var publisher = publishers.Entities[0];
+        var solution = new Entity("solution")
+        {
+            ["uniquename"]   = solutionName,
+            ["friendlyname"] = solutionName,
+            ["publisherid"]  = new EntityReference("publisher", publisher.Id),
+            ["version"]      = "1.0.0.0"
+        };
+
+        svc.Create(solution);
+        Console.WriteLine($"  Created solution '{solutionName}' (publisher: {publisher.GetAttributeValue<string>("friendlyname") ?? publisherPrefix})");
+        return true;
     }
 }

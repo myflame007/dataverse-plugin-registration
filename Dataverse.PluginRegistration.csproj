@@ -12,7 +12,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>plugin-reg</ToolCommandName>
     <PackageId>Dataverse.PluginRegistration</PackageId>
-    <Version>1.3.1</Version>
+    <Version>1.3.2</Version>
     <Authors>Community</Authors>
     <Description>Dataverse plugin registration tool for NuGet-based (dependent assembly) plugins. Reads CrmPluginRegistrationAttribute and registers steps + images — like spkl, but for PluginPackages.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
