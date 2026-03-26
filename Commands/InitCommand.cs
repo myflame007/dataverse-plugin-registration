@@ -4,6 +4,7 @@ internal static class InitCommand
 {
     internal static int Run(string[] args)
     {
+        // ── Config file ────────────────────────────────────────────────────────
         var configPath = ArgsResolver.GetArg(args, "--config") ?? PluginRegConfig.DefaultFileName;
 
         if (File.Exists(configPath))
@@ -19,7 +20,46 @@ internal static class InitCommand
 
         config.Save(configPath);
         Console.WriteLine($"Created: {Path.GetFullPath(configPath)}");
+
+        // ── Attribute templates ────────────────────────────────────────────────
+        ScaffoldAttributeTemplates();
+
         Console.WriteLine("Edit environments and assembly paths, then run: plugin-reg register --env dev");
         return 0;
+    }
+
+    private static void ScaffoldAttributeTemplates()
+    {
+        var attributesDir = Path.Combine(Directory.GetCurrentDirectory(), "Attributes");
+        Directory.CreateDirectory(attributesDir);
+
+        var assembly = typeof(InitCommand).Assembly;
+
+        var templates = new[]
+        {
+            "CrmPluginRegistrationAttribute.cs",
+            "CustomApiAttributes.cs",
+        };
+
+        foreach (var fileName in templates)
+        {
+            var resourceName = $"Dataverse.PluginRegistration.RequiredAttributes.{fileName}";
+            using var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream == null)
+            {
+                Console.WriteLine($"  WARN: embedded resource '{resourceName}' not found — skipping.");
+                continue;
+            }
+
+            var outPath = Path.Combine(attributesDir, fileName);
+            bool existed = File.Exists(outPath);
+
+            using var fs = File.Create(outPath);
+            stream.CopyTo(fs);
+
+            Console.WriteLine(existed
+                ? $"  Updated : Attributes/{fileName}"
+                : $"  Created : Attributes/{fileName}");
+        }
     }
 }

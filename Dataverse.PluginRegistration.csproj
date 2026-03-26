@@ -12,7 +12,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>plugin-reg</ToolCommandName>
     <PackageId>Dataverse.PluginRegistration</PackageId>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Authors>Community</Authors>
     <Description>Dataverse plugin registration tool for NuGet-based (dependent assembly) plugins. Reads CrmPluginRegistrationAttribute and registers steps + images — like spkl, but for PluginPackages.</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -38,6 +38,12 @@
     <Compile Remove="Examples\*.cs" />
     <None Include="Examples\*.cs" />
     <Compile Remove="Tests\**" />
+  </ItemGroup>
+
+  <!-- Attribute templates: embedded into the tool, extracted by 'plugin-reg init' -->
+  <ItemGroup>
+    <Compile Remove="RequiredAttributes\*.cs" />
+    <EmbeddedResource Include="RequiredAttributes\*.cs" />
   </ItemGroup>
 
 </Project>
