@@ -1353,6 +1353,13 @@ und machen ihn besser, fur die Zukunft (PluginPackages).
   - Bash, Zsh, Fish, PowerShell
   - Evaluieren ob `System.CommandLine` sich lohnt als CLI-Framework
 
+- [ ] **`--verbose` Flag (detailliertes Logging)**
+  - Aktuell gibt das Tool nur High-Level Status aus ("Created step X")
+  - Mit `--verbose` / `-v`: vollständige Payloads, Dataverse Request/Response Details,
+    Timing pro Operation, exakte Fehlermeldungen mit Stack Trace
+  - Wichtig für Debugging in CI/CD Pipelines und bei unerwartetem Verhalten
+  - Inspiriert vom Kollegen-Tool (hat `-v` als Standard-Flag)
+
 - [ ] **`--quiet` Flag**
   - Unterdrukt alle Ausgaben ausser Fehlern
   - Wichtig fur CI/CD Scripts die nur Exit-Codes brauchen
@@ -1388,6 +1395,36 @@ und machen ihn besser, fur die Zukunft (PluginPackages).
   - Streaming oder Chunking implementieren
 
 ### Feature-Erweiterungen
+
+- [ ] **Obsolete Step Deletion (Orphan Cleanup)**
+  - Aktuell bleiben Steps in Dataverse stehen wenn sie aus dem Code entfernt werden
+  - Beim `register`-Lauf: Steps die in Dataverse existieren aber nicht mehr im
+    Assembly-Attribut auftauchen → automatisch löschen
+  - Abschaltbar via `--no-delete-obsolete` für Teams die vorsichtiger vorgehen wollen
+  - Kollegen-Tool macht das standardmäßig — ist ein klares Praxis-Bedürfnis
+  - **Achtung:** Nur Steps löschen die zum registrierten Assembly gehören,
+    nicht alle Steps der Org
+
+- [ ] **`--dry-run` Flag (What-if / Vorschau-Modus)**
+  - `plugin-reg register --env dev --dry-run`
+  - Läuft komplett durch die Registration-Logik, ruft aber keine Dataverse-APIs auf
+  - Gibt aus was *täte* passieren:
+    ```
+    [DRY-RUN] Would CREATE step: Contact Update PostOperation (sync)
+    [DRY-RUN] Would UPDATE step: Account Create (filtering attrs changed)
+    [DRY-RUN] Would DELETE orphan step: Legacy_OldPlugin: Update
+    ```
+  - Ideal für CI/CD Pre-Checks, Pull-Request-Reviews, erste Deployments
+  - Ist bereits als Differenzierungsmerkmal in der Roadmap erwähnt — braucht
+    jetzt eine konkrete Implementierung
+  - Kollegen-Tool hat das für Custom APIs; wir sollten es für alles haben
+
+- [ ] **Proxy Support (`--proxy`)**
+  - `plugin-reg register --env prod --proxy http://proxy.company.com:8080`
+  - Relevant für CI/CD in Unternehmensumgebungen die keinen direkten
+    Internetzugang haben (kein System-Proxy in Docker/GitHub Actions)
+  - Realisierbar via `HttpClientHandler` + `WebProxy` an den `ServiceClient`
+  - Niedrige Priorität — nur relevant wenn jemand explizit danach fragt
 
 - [ ] **Step Enable/Disable Befehl**
   - `plugin-reg disable --step "StepName"` / `plugin-reg enable --step "StepName"`
